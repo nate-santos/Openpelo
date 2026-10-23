@@ -26,6 +26,51 @@ class AdbService {
   String? _connectedIp;
   int _connectedPort = 5555;
 
+  // The mobile ADB client must present the SAME RSA identity on every
+  // connection: devices remember the key they authorized, and Android 11+
+  // wireless pairing binds trust to it. The keypair is generated once and
+  // persisted in the app support directory (flutter_adb 1.0.0 provides the
+  // serialization); before this, every Adb.* call generated a fresh keypair.
+  AdbCrypto? _mobileCryptoCache;
+  Future<AdbCrypto>? _mobileCryptoLoad;
+
+  Future<AdbCrypto> _mobileCrypto() {
+    final cached = _mobileCryptoCache;
+    if (cached != null) return Future.value(cached);
+    return _mobileCryptoLoad ??= _loadOrCreateMobileCrypto();
+  }
+
+  Future<AdbCrypto> _loadOrCreateMobileCrypto() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File(p.join(dir.path, 'adb_keypair.json'));
+      if (await file.exists()) {
+        final decoded = jsonDecode(await file.readAsString());
+        if (decoded is Map<String, dynamic>) {
+          final crypto = AdbCrypto(
+            keyPair: AdbCrypto.keyPairFromStorageMap(decoded),
+            adbKeyName: 'openpelo@android',
+          );
+          _mobileCryptoCache = crypto;
+          return crypto;
+        }
+      }
+      final crypto = AdbCrypto(adbKeyName: 'openpelo@android');
+      await file.writeAsString(jsonEncode(crypto.exportKeyPairForStorage()));
+      _mobileCryptoCache = crypto;
+      return crypto;
+    } catch (e) {
+      onLog(
+        'Could not load or persist the ADB keypair ($e); '
+            'using a temporary key for this session.',
+        'error',
+      );
+      final crypto = AdbCrypto(adbKeyName: 'openpelo@android');
+      _mobileCryptoCache = crypto;
+      return crypto;
+    }
+  }
+
   // Device properties are small and stable for the lifetime of an ADB
   // connection. Keeping them here avoids issuing several getprop commands on
   // every five-second device heartbeat. Entries are removed when a device
@@ -226,6 +271,7 @@ class AdbService {
             'getprop ro.product.model',
             ip: _connectedIp!,
             port: _connectedPort,
+            crypto: await _mobileCrypto(),
           );
           if (out.isNotEmpty) {
             final serial = "$_connectedIp:$_connectedPort";
@@ -360,6 +406,7 @@ class AdbService {
           'getprop',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         properties = parseDeviceProperties(output);
       } else {
@@ -426,6 +473,7 @@ class AdbService {
         'getprop ro.product.cpu.abi',
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
     }
     try {
@@ -455,6 +503,7 @@ class AdbService {
           deviceResourcesProbeCommand,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         ).timeout(const Duration(seconds: 8));
       } else {
         final result = await runAdbCommand(
@@ -479,11 +528,13 @@ class AdbService {
         'getprop ro.product.manufacturer',
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
       final model = await Adb.sendSingleCommand(
         'getprop ro.product.model',
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
       return "$manufacturer $model".trim();
     }
@@ -525,6 +576,7 @@ class AdbService {
           apkPath,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         if (success) {
           return "Success";
@@ -587,6 +639,7 @@ class AdbService {
         'pm uninstall $packageName',
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
       return out.isEmpty
           ? "Success"
@@ -612,6 +665,7 @@ class AdbService {
         'pm uninstall --user 0 $packageName',
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
       return out;
     }
@@ -637,6 +691,7 @@ class AdbService {
           'pm list packages',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         final List<String> packages = [];
         for (var line in output.split('\n')) {
@@ -965,6 +1020,7 @@ class AdbService {
         mobileCommand,
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
     }
 
@@ -1044,6 +1100,7 @@ class AdbService {
         command,
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
     }
 
@@ -1058,6 +1115,7 @@ class AdbService {
         command,
         ip: _connectedIp!,
         port: _connectedPort,
+        crypto: await _mobileCrypto(),
       );
     }
 
@@ -1526,6 +1584,7 @@ class AdbService {
           'echo init',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         onLog("Mobile ADB Client set to $_connectedIp:$_connectedPort", 'info');
       } catch (e) {
@@ -1546,9 +1605,21 @@ class AdbService {
 
   Future<void> pairDevice(String ip, String port, String code) async {
     if (isMobile) {
-      throw UnsupportedError(
-        'Pairing is not supported by the mobile ADB client.',
+      final pairingPort = int.tryParse(port);
+      if (pairingPort == null) {
+        throw Exception('Invalid pairing port: $port');
+      }
+      final paired = await AdbPairing.pair(
+        ip,
+        pairingPort,
+        code,
+        await _mobileCrypto(),
       );
+      if (!paired) {
+        throw Exception('Pairing failed for $ip:$port');
+      }
+      onLog('Paired with $ip:$port', 'info');
+      return;
     }
     final result = await runAdbCommand(['pair', '$ip:$port', code]);
     final output = '${result.stdout}\n${result.stderr}'.toLowerCase();
@@ -1725,6 +1796,7 @@ class AdbService {
           'screencap -p $remotePath',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         onLog("Downloading screenshot...", 'info');
         bool success = await Adb.downloadFile(
@@ -1732,12 +1804,14 @@ class AdbService {
           localPath,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         if (success) {
           await Adb.sendSingleCommand(
             'rm $remotePath',
             ip: _connectedIp!,
             port: _connectedPort,
+            crypto: await _mobileCrypto(),
           );
           onLog("Screenshot saved to $localPath", 'info');
         } else {
@@ -1768,6 +1842,7 @@ class AdbService {
           'screencap -p $remotePath',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         // 2. Pull
         bool success = await Adb.downloadFile(
@@ -1775,6 +1850,7 @@ class AdbService {
           localPath,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         // 3. Del (Fire and forget to speed up UI?)
         // No, we should clean up. But maybe async without await?
@@ -1782,6 +1858,7 @@ class AdbService {
           'rm $remotePath',
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
 
         if (success) {
@@ -1845,12 +1922,14 @@ class AdbService {
           localPath,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         if (success) {
           await Adb.sendSingleCommand(
             'rm $remotePath',
             ip: _connectedIp!,
             port: _connectedPort,
+            crypto: await _mobileCrypto(),
           );
           onLog("Recording saved to $localPath", 'info');
         } else {
@@ -1894,9 +1973,6 @@ class AdbService {
     String localPath,
     String remoteDir,
   ) async {
-    if (isMobile) {
-      throw Exception("Uploading files is not supported on the mobile client.");
-    }
     final remotePath = joinRemotePath(remoteDir, p.basename(localPath));
     if (await _remoteEntryExists(serial, remotePath)) {
       throw Exception('A file named ${p.basename(localPath)} already exists.');
@@ -1904,7 +1980,21 @@ class AdbService {
 
     final temporaryPath = await _unusedRemoteTransferPath(serial, remoteDir);
     try {
-      await runAdbCommand(['-s', serial, 'push', localPath, temporaryPath]);
+      if (isMobile) {
+        if (_connectedIp == null) throw Exception('No device connected.');
+        final uploaded = await Adb.uploadFile(
+          localPath,
+          temporaryPath,
+          ip: _connectedIp!,
+          port: _connectedPort,
+          crypto: await _mobileCrypto(),
+        );
+        if (!uploaded) {
+          throw Exception('Could not upload ${p.basename(localPath)}.');
+        }
+      } else {
+        await runAdbCommand(['-s', serial, 'push', localPath, temporaryPath]);
+      }
       final renameResult = await _renameEntryNoClobber(
         serial,
         temporaryPath,
@@ -1941,6 +2031,7 @@ class AdbService {
           temporaryPath,
           ip: _connectedIp!,
           port: _connectedPort,
+          crypto: await _mobileCrypto(),
         );
         if (!success) throw Exception("Failed to download $remotePath");
       } else {
