@@ -21,7 +21,12 @@ val releaseKeystoreConfigured = listOf(
 
 android {
     namespace = "com.doudar.openpelo"
-    compileSdk = flutter.compileSdkVersion
+    // Target the latest stable Android release: Android 17 (API 37).
+    // Flutter 3.44's flutter.compileSdkVersion / flutter.targetSdkVersion
+    // default to API 36, and AGP must be >= 9.1 to compile against API 37
+    // (see settings.gradle.kts and the Gradle wrapper), so pin both levels
+    // explicitly here instead of inheriting the Flutter defaults.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -38,7 +43,8 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Android 17 (API 37) -- see the note on compileSdk above.
+        targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
