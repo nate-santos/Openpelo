@@ -19,8 +19,11 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.0.1" apply false
-    id("com.android.library") version "9.0.1" apply false
+    // AGP 9.1.1 is the first 9.x line that can compile against API 37
+    // (Android 17); AGP 9.0.x caps out at compile SDK 36.1. AGP 9.1
+    // requires Gradle >= 9.3.1 -- see gradle/wrapper/gradle-wrapper.properties.
+    id("com.android.application") version "9.1.1" apply false
+    id("com.android.library") version "9.1.1" apply false
     id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
