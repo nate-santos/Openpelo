@@ -162,7 +162,7 @@ jobs:
           "$BUILD_TOOLS_DIR/aapt2" dump badging "$APK" | tee apk-badging.txt
           grep -q "package: name='com.doudar.openpelo'" apk-badging.txt
           grep -q "targetSdkVersion:'${ANDROID_API_LEVEL}'" apk-badging.txt
-          grep -q "sdkVersion:" apk-badging.txt
+          grep -q "minSdkVersion:" apk-badging.txt
           "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK"
           echo "Verified: targetSdkVersion = $ANDROID_API_LEVEL, signature valid."
 
