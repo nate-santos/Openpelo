@@ -227,6 +227,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG exists -- uploading APK asset to it."
             gh release upload "$TAG" dist/OpenPelo-Android.apk --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
             echo "Creating release $TAG with the APK."
             gh release create "$TAG" dist/OpenPelo-Android.apk \

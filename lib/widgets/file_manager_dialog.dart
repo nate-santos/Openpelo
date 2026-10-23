@@ -15,6 +15,12 @@ const double _columnGap = 20;
 // Fits 'YYYY-MM-DD HH:MM:SS', the longest form the ls parser produces.
 const double _modifiedColumnWidth = 150;
 const double _actionsColumnWidth = 192; // three IconButtons + overflow menu
+const double _actionsColumnWidthNarrow = 48; // overflow menu only
+
+/// Phone-width layouts drop the Modified column and collapse the per-file
+/// actions to the overflow menu (which contains every action anyway).
+bool _isNarrowLayout(BuildContext context) =>
+    MediaQuery.sizeOf(context).width < 600;
 const double _arrowSlotWidth = 18;
 
 class FileManagerDialog extends StatefulWidget {
@@ -370,30 +376,34 @@ class _FileManagerDialogState extends State<FileManagerDialog> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: "Up one level",
-                  onPressed: _busy || _currentPath == '/' ? null : _goUp,
-                  icon: const Icon(Icons.arrow_upward),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: TextField(
-                    controller: _pathController,
-                    enabled: !_busy,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.folder),
-                      labelText: "Device path",
-                      border: OutlineInputBorder(),
-                      isDense: true,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pathRow = Row(
+                  children: [
+                    IconButton(
+                      tooltip: "Up one level",
+                      onPressed: _busy || _currentPath == '/' ? null : _goUp,
+                      icon: const Icon(Icons.arrow_upward),
                     ),
-                    onSubmitted: (value) => _navigateTo(value),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Wrap(
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: TextField(
+                        controller: _pathController,
+                        enabled: !_busy,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.folder),
+                          labelText: "Device path",
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onSubmitted: (value) => _navigateTo(value),
+                      ),
+                    ),
+                  ],
+                );
+                final shortcuts = Wrap(
                   spacing: 6,
+                  runSpacing: 6,
                   children: _shortcuts.entries
                       .map(
                         (shortcut) => ActionChip(
@@ -404,8 +414,24 @@ class _FileManagerDialogState extends State<FileManagerDialog> {
                         ),
                       )
                       .toList(),
-                ),
-              ],
+                );
+                // On phone-width dialogs the shortcut chips don't fit next
+                // to the path field; give them their own row instead of
+                // squeezing the field to nothing (or overflowing).
+                if (constraints.maxWidth < 600) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [pathRow, const SizedBox(height: 8), shortcuts],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: pathRow),
+                    const SizedBox(width: 12),
+                    shortcuts,
+                  ],
+                );
+              },
             ),
           ),
           _buildSortHeader(),
@@ -471,12 +497,18 @@ class _FileManagerDialogState extends State<FileManagerDialog> {
             width: _sizeColumnWidth,
             child: cell("Size", DeviceFileSort.size, alignEnd: true),
           ),
-          const SizedBox(width: _columnGap),
+          if (!_isNarrowLayout(context)) ...[
+            const SizedBox(width: _columnGap),
+            SizedBox(
+              width: _modifiedColumnWidth,
+              child: cell("Modified", DeviceFileSort.modified),
+            ),
+          ],
           SizedBox(
-            width: _modifiedColumnWidth,
-            child: cell("Modified", DeviceFileSort.modified),
+            width: _isNarrowLayout(context)
+                ? _actionsColumnWidthNarrow
+                : _actionsColumnWidth,
           ),
-          const SizedBox(width: _actionsColumnWidth),
         ],
       ),
     );
@@ -522,62 +554,96 @@ class _FileManagerDialogState extends State<FileManagerDialog> {
         // point, so it is labelled and styled as a default rather than as the
         // place the next download will land.
         final asking = provider.askEachDownload;
+        final askToggle = Tooltip(
+          message: "Pick a folder for every download",
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: provider.askEachDownload,
+                visualDensity: VisualDensity.compact,
+                onChanged: _transferring
+                    ? null
+                    : (value) => provider.setAskEachDownload(value ?? false),
+              ),
+              const Text("Ask each time"),
+            ],
+          ),
+        );
         return Container(
           padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHigh,
             border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
           ),
-          child: Row(
-            children: [
-              Text(asking ? "Default folder:" : "Save to:"),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Tooltip(
-                  message: destination,
-                  child: Text(
-                    destination,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: asking ? FontWeight.normal : FontWeight.w600,
-                      color: asking ? colorScheme.onSurfaceVariant : null,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 600;
+              final mainRow = Row(
+                children: [
+                  if (!narrow) ...[
+                    Text(asking ? "Default folder:" : "Save to:"),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Tooltip(
+                      message: destination,
+                      child: Text(
+                        destination,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: asking
+                              ? FontWeight.normal
+                              : FontWeight.w600,
+                          color: asking ? colorScheme.onSurfaceVariant : null,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: _transferring ? null : provider.chooseSaveLocation,
-                icon: const Icon(Icons.edit, size: 16),
-                label: const Text("Change"),
-              ),
-              IconButton(
-                tooltip: "Open save folder",
-                onPressed: destination.isEmpty
-                    ? null
-                    : () => provider.openSaveLocation(),
-                icon: const Icon(Icons.folder_open, size: 18),
-                visualDensity: VisualDensity.compact,
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: "Pick a folder for every download",
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Checkbox(
-                      value: provider.askEachDownload,
-                      visualDensity: VisualDensity.compact,
-                      onChanged: _transferring
+                  const SizedBox(width: 8),
+                  if (narrow)
+                    IconButton(
+                      tooltip: "Change save folder",
+                      onPressed: _transferring
                           ? null
-                          : (value) =>
-                                provider.setAskEachDownload(value ?? false),
+                          : provider.chooseSaveLocation,
+                      icon: const Icon(Icons.edit, size: 18),
+                      visualDensity: VisualDensity.compact,
+                    )
+                  else
+                    TextButton.icon(
+                      onPressed: _transferring
+                          ? null
+                          : provider.chooseSaveLocation,
+                      icon: const Icon(Icons.edit, size: 16),
+                      label: const Text("Change"),
                     ),
-                    const Text("Ask each time"),
-                  ],
-                ),
-              ),
-            ],
+                  IconButton(
+                    tooltip: "Open save folder",
+                    onPressed: destination.isEmpty
+                        ? null
+                        : () => provider.openSaveLocation(),
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              );
+              // Phone widths cannot fit the path, actions, and the
+              // "Ask each time" toggle on one line; stack the toggle below.
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [mainRow, askToggle],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: mainRow),
+                  const SizedBox(width: 8),
+                  askToggle,
+                ],
+              );
+            },
           ),
         );
       },
@@ -779,36 +845,42 @@ class _DeviceFileTile extends StatelessWidget {
                   style: detailStyle,
                 ),
               ),
-              const SizedBox(width: _columnGap),
-              SizedBox(
-                width: _modifiedColumnWidth,
-                child: Text(
-                  entry.modified ?? '',
-                  overflow: TextOverflow.ellipsis,
-                  style: detailStyle,
+              if (!_isNarrowLayout(context)) ...[
+                const SizedBox(width: _columnGap),
+                SizedBox(
+                  width: _modifiedColumnWidth,
+                  child: Text(
+                    entry.modified ?? '',
+                    overflow: TextOverflow.ellipsis,
+                    style: detailStyle,
+                  ),
                 ),
-              ),
+              ],
               SizedBox(
-                width: _actionsColumnWidth,
+                width: _isNarrowLayout(context)
+                    ? _actionsColumnWidthNarrow
+                    : _actionsColumnWidth,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    IconButton(
-                      tooltip: "Download",
-                      onPressed: enabled ? onDownload : null,
-                      icon: const Icon(Icons.download),
-                    ),
-                    IconButton(
-                      tooltip: "Rename",
-                      onPressed: enabled ? onRename : null,
-                      icon: const Icon(Icons.drive_file_rename_outline),
-                    ),
-                    IconButton(
-                      tooltip: "Delete",
-                      onPressed: enabled ? onDelete : null,
-                      color: AppColors.danger,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
+                    if (!_isNarrowLayout(context)) ...[
+                      IconButton(
+                        tooltip: "Download",
+                        onPressed: enabled ? onDownload : null,
+                        icon: const Icon(Icons.download),
+                      ),
+                      IconButton(
+                        tooltip: "Rename",
+                        onPressed: enabled ? onRename : null,
+                        icon: const Icon(Icons.drive_file_rename_outline),
+                      ),
+                      IconButton(
+                        tooltip: "Delete",
+                        onPressed: enabled ? onDelete : null,
+                        color: AppColors.danger,
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
                     PopupMenuButton<VoidCallback>(
                       tooltip: "More actions",
                       enabled: enabled,

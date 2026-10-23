@@ -17,6 +17,7 @@ void main() {
     (const Size(1000, 660), 1.0, true),
     (const Size(1000, 660), 1.5, true),
     (const Size(390, 844), 1.0, false),
+    (const Size(360, 800), 1.0, false),
   ]) {
     final (size, textScale, updateNotice) = scenario;
     testWidgets('device details and controls fit $scenario', (tester) async {
