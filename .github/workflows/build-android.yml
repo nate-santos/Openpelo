@@ -1,0 +1,236 @@
+name: Build Android APK
+
+# Builds an installable Android APK of OpenPelo and publishes it to this
+# repository's Releases.
+#
+# Target: Android 17 (API level 37) -- the latest stable Android release.
+# That requires more than the upstream desktop workflow pins:
+#   * android/app/build.gradle.kts sets compileSdk / targetSdk to 37
+#     explicitly (Flutter 3.44's own defaults are API 36).
+#   * android/settings.gradle.kts uses AGP 9.1.1 -- AGP 9.0.x caps out at
+#     compile SDK 36.1, while AGP 9.1+ supports API 37.
+#   * the Gradle wrapper is 9.3.1, the minimum AGP 9.1 requires.
+#   * this job installs the android-37 platform + build-tools 37.
+#
+# Signing: upstream deliberately ships Android release builds unsigned
+# unless android/key.properties supplies a keystore (see DISTRIBUTION.md).
+# An unsigned APK cannot be installed, so this job writes key.properties
+# from repository secrets when they exist:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Without those secrets it generates a one-off keystore inside the runner
+# instead: the APK installs fine, but its signature changes on every run,
+# so an update has to be uninstalled before the new build will install.
+# Add the secrets above for a stable signing identity.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach the APK to (blank = create android-v<version>)'
+        required: false
+        type: string
+  push:
+    tags: [ "v*" ]
+  # Attach an APK to each desktop release: the upstream "Build Flutter App"
+  # workflow bumps the version, tags it, and creates the release on pushes
+  # to main. workflow_run fires after it finishes, so the release already
+  # exists and this job only adds the APK asset to it.
+  workflow_run:
+    workflows: [ "Build Flutter App" ]
+    types: [ completed ]
+    branches: [ "main" ]
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same Flutter pin as the upstream desktop workflow (.github/workflows/build.yml),
+  # which is the version pubspec.lock was resolved against.
+  FLUTTER_VERSION: '3.44.4'
+  ANDROID_API_LEVEL: '37'
+  GRADLE_VERSION: '9.3.1'
+
+jobs:
+  build-android:
+    # For workflow_run, only proceed when the desktop build succeeded.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK (API 37)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37 build-tools;37.0.0 build-tools;36.0.0 ndk;28.2.13676358
+
+      - name: Setup Flutter SDK
+        uses: flutter-actions/setup-flutter@v4.2
+        with:
+          channel: stable
+          version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-sdk: true
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      # gradlew / gradle-wrapper.jar are gitignored in this repo (they are
+      # generated files here), so a fresh checkout has no wrapper to run.
+      # Regenerate only the missing Android scaffolding -- flutter create
+      # does not overwrite the existing build.gradle.kts / settings files --
+      # then re-pin the wrapper to the Gradle version AGP 9.1 requires, in
+      # case the template restored its own default.
+      - name: Ensure Gradle wrapper (pinned to ${{ env.GRADLE_VERSION }})
+        run: |
+          if [ ! -f android/gradlew ]; then
+            flutter create --platforms=android --project-name openpelo .
+          fi
+          chmod +x android/gradlew
+          cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+          EOF
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
+      # See the signing note at the top of this file.
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/openpelo-release.jks"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            STORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+            KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            SIGNING_MODE="repository release keystore (stable signing identity)"
+            echo "SIGNING_MODE=$SIGNING_MODE" >> "$GITHUB_ENV"
+          else
+            STORE_PASSWORD="$(openssl rand -base64 32)"
+            KEY_PASSWORD="$STORE_PASSWORD"
+            KEY_ALIAS="openpelo-ci"
+            echo "::add-mask::$STORE_PASSWORD"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -dname "CN=OpenPelo CI, OU=Personal fork, O=nate-santos, C=US"
+            SIGNING_MODE="ephemeral CI keystore (no signing secrets set -- signature changes every run)"
+            echo "SIGNING_MODE=$SIGNING_MODE" >> "$GITHUB_ENV"
+          fi
+          # android/key.properties is gitignored; build.gradle.kts only
+          # creates the "release" signing config when all four keys exist.
+          cat > android/key.properties <<EOF
+          storeFile=$KEYSTORE_PATH
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "Signing configured: $SIGNING_MODE"
+
+      - name: Build release APK (target API ${{ env.ANDROID_API_LEVEL }})
+        run: |
+          flutter build apk --release
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/OpenPelo-Android.apk
+          ls -lh dist/OpenPelo-Android.apk
+
+      # Fail the run rather than publish an APK that does not actually
+      # target the latest Android, and prove the APK is signed.
+      - name: Verify APK target SDK and signature
+        run: |
+          APK=dist/OpenPelo-Android.apk
+          BUILD_TOOLS_DIR="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          echo "Using build-tools: $BUILD_TOOLS_DIR"
+          "$BUILD_TOOLS_DIR/aapt2" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='com.doudar.openpelo'" apk-badging.txt
+          grep -q "targetSdkVersion:'${ANDROID_API_LEVEL}'" apk-badging.txt
+          grep -q "sdkVersion:" apk-badging.txt
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK"
+          echo "Verified: targetSdkVersion = $ANDROID_API_LEVEL, signature valid."
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenPelo-Android-APK
+          path: dist/OpenPelo-Android.apk
+
+      - name: Determine release tag
+        id: release_info
+        run: |
+          VERSION="$(python3 -c "import json; print(json.load(open('version.json'))['version'])")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" == "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [ "${{ github.event_name }}" == "workflow_run" ]; then
+            TAG="v$VERSION"
+          else
+            TAG="android-v$VERSION"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG (app version $VERSION)"
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<EOF
+          ## OpenPelo for Android
+
+          Installable APK built by the **Build Android APK** workflow in this fork.
+
+          - **Target: Android 17 (API level ${ANDROID_API_LEVEL})** — compileSdk ${ANDROID_API_LEVEL} / targetSdk ${ANDROID_API_LEVEL}
+          - Package: \`com.doudar.openpelo\`
+          - App version: ${{ steps.release_info.outputs.version }}
+          - Signing: ${SIGNING_MODE}
+
+          ### Install
+          1. Download \`OpenPelo-Android.apk\` below on your phone.
+          2. Open it and allow "install from this source" if Android asks.
+          3. On the phone, OpenPelo runs in its mobile mode (built-in Dart ADB
+             client for wireless ADB connections); desktop-only features stay off.
+
+          > If this build was signed with the ephemeral CI keystore, uninstall
+          > any previous OpenPelo build first — Android refuses an in-place
+          > update when the signature changes. Add the secrets
+          > \`ANDROID_KEYSTORE_BASE64\`, \`ANDROID_KEYSTORE_PASSWORD\`,
+          > \`ANDROID_KEY_ALIAS\` and \`ANDROID_KEY_PASSWORD\` to this repository
+          > for a stable signing identity.
+          EOF
+          cat release-notes.md
+
+      # Attach to the release when it already exists (e.g. the desktop
+      # release for the same tag) without touching its title/notes;
+      # otherwise create a standalone Android release.
+      - name: Publish APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.release_info.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists -- uploading APK asset to it."
+            gh release upload "$TAG" dist/OpenPelo-Android.apk --clobber
+          else
+            echo "Creating release $TAG with the APK."
+            gh release create "$TAG" dist/OpenPelo-Android.apk \
+              --title "OpenPelo $TAG (Android APK)" \
+              --notes-file release-notes.md
+          fi
+          gh release view "$TAG" --json url,tagName,assets --jq '{url, tag: .tagName, assets: [.assets[].name]}'
