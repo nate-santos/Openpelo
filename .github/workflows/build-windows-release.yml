@@ -1,0 +1,56 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create/update (blank = windows-v1.0.81-adb1)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  build-windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Flutter SDK
+        uses: flutter-actions/setup-flutter@v4.2
+        with:
+          channel: stable
+          version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-sdk: true
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Create Installer
+        working-directory: windows
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=1.0.81" InnoSetupScript.iss
+
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $Tag = "${{ inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($Tag)) { $Tag = "windows-v1.0.81-adb1" }
+          if (gh release view $Tag --json tagName 2>$null) {
+            gh release upload $Tag dist/OpenPelo_Setup_Windows.exe --clobber
+          } else {
+            gh release create $Tag dist/OpenPelo_Setup_Windows.exe --title "OpenPelo $Tag (Windows)" --notes "Windows desktop build of the flutter-adb-upgrade branch (upgraded flutter_adb: persistent identity, Android 11+ pairing on mobile; desktop mode unchanged, uses platform adb). App version 1.0.81."
+          }
+          gh release view $Tag --json url,tagName,assets --jq '{url, tag: .tagName, assets: [.assets[].name]}'
