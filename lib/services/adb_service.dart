@@ -13,6 +13,7 @@ import '../models/device_model.dart';
 import '../models/device_resources.dart';
 import '../models/device_file_model.dart';
 import '../models/installed_app_model.dart';
+import 'install_result.dart';
 import 'device_file_parser.dart';
 import 'device_resources_parser.dart';
 
@@ -571,18 +572,19 @@ class AdbService {
       if (_connectedIp == null) return "Error: Not connected";
       try {
         onLog("Uploading and installing APK...", 'info');
-        // Use the new installApk method from the fork
-        bool success = await Adb.installApk(
+        final result = await Adb.installApkResult(
           apkPath,
           ip: _connectedIp!,
           port: _connectedPort,
           crypto: await _mobileCrypto(),
         );
-        if (success) {
-          return "Success";
-        } else {
-          return "Error: Installation returned false";
-        }
+        onLog(
+          result.isEmpty ? 'Package manager returned no result.' : result,
+          isSuccessfulInstallResult(result) ? 'info' : 'error',
+        );
+        return result.isEmpty
+            ? 'Error: Package manager returned no result'
+            : result;
       } catch (e) {
         return "Error installing APK: $e";
       }

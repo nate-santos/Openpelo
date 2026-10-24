@@ -217,11 +217,9 @@ packages:
   flutter_adb:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "58ce3167a9d4f217f46e034b0a56402e7640d50d"
-      resolved-ref: "58ce3167a9d4f217f46e034b0a56402e7640d50d"
-      url: "https://github.com/nate-santos/flutter_adb.git"
-    source: git
+      path: "third_party/flutter_adb"
+      relative: true
+    source: path
     version: "1.0.0"
   flutter_launcher_icons:
     dependency: "direct dev"

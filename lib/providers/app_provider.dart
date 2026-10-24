@@ -12,6 +12,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/adb_service.dart';
+import '../services/install_result.dart';
 import '../services/wireless_connection_manager.dart';
 import '../services/config_service.dart';
 import '../services/catalog_service.dart';
@@ -41,6 +42,7 @@ class AppProvider with ChangeNotifier {
   final AdbService _adbService;
   final ConfigService _configService;
   final CatalogService _catalogService;
+  final Future<String?> Function()? _apkPicker;
   int _catalogGeneration = 0;
   Timer? _catalogTimer;
   bool isCheckingCatalog = false;
@@ -127,9 +129,11 @@ class AppProvider with ChangeNotifier {
     AdbService? adbService,
     ConfigService? configService,
     CatalogService? catalogService,
+    Future<String?> Function()? apkPicker,
   }) : _adbService = adbService ?? AdbService(onLog: (m, t) {}),
        _configService = configService ?? ConfigService(),
-       _catalogService = catalogService ?? CatalogService() {
+       _catalogService = catalogService ?? CatalogService(),
+       _apkPicker = apkPicker {
     _wirelessConnections = WirelessConnectionManager(
       adb: _adbService,
       save: (data) async {
@@ -1005,7 +1009,7 @@ class AppProvider with ChangeNotifier {
             retryInstall: () => _adbService.installApk(target.serial, apkPath),
           );
 
-          if (output.contains('Success')) {
+          if (isSuccessfulInstallResult(output)) {
             _onLog("Successfully installed ${app.name}", 'info');
           } else {
             _onLog("Error installing ${app.name}: $output", 'error');
@@ -1029,7 +1033,9 @@ class AppProvider with ChangeNotifier {
 
     String? path;
     try {
-      path = Platform.isMacOS
+      path = _apkPicker != null
+          ? await _apkPicker()
+          : Platform.isMacOS
           ? await _pickMacOSApk()
           : await _pickApkWithFilePicker();
     } on PlatformException catch (e) {
@@ -1068,7 +1074,7 @@ class AppProvider with ChangeNotifier {
         retryInstall: () => _adbService.installApk(target.serial, apkPath),
       );
 
-      if (output.contains('Success')) {
+      if (isSuccessfulInstallResult(output)) {
         _onLog("Successfully installed local APK", 'info');
       } else {
         _onLog("Failed install: $output", 'error');

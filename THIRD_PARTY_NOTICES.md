@@ -1,5 +1,12 @@
 # Third-party notices
 
+## flutter_adb
+
+OpenPelo includes the repaired flutter_adb 1.0.0 source under
+`third_party/flutter_adb`. Its source provenance is recorded in `VENDORED.md`,
+and its original license is retained at `third_party/flutter_adb/LICENSE`.
+The package license is also collected by Flutter's application license bundle.
+
 ## scrcpy server 3.3.4
 
 OpenPelo bundles the unmodified `scrcpy-server-v3.3.4` Android server to power

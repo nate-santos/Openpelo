@@ -14,9 +14,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_adb:
-    git:
-      url: https://github.com/nate-santos/flutter_adb.git
-      ref: 58ce3167a9d4f217f46e034b0a56402e7640d50d
+    path: third_party/flutter_adb
   http: ^1.6.0
   intl: ^0.20.3
   media_kit: ^1.2.6
