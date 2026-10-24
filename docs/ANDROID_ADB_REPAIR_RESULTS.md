@@ -110,5 +110,8 @@ workspace. The original failed-release report is retained separately as
 - `same-apk-checksum.txt`: identical-APK verification for Windows and Android.
 - `final-controller-crash-log.txt`: no Android crash records for the final controller test.
 
-GitHub publication is outside this local deliverable. Source and test artifacts
-remain local; no remote branch, pull request, or release was created.
+After explicit publication authorization, the source repair branches were pushed
+only to [nate-santos/Openpelo](https://github.com/nate-santos/Openpelo/tree/fix/android-adb-transfer)
+and [nate-santos/flutter_adb](https://github.com/nate-santos/flutter_adb/tree/fix/negotiated-adb-writes).
+No upstream repository was changed. The test APK and raw evidence remain local;
+no pull request or release was created.

@@ -41,6 +41,6 @@ Reviewable source changes, meaningful regression tests, a rebuilt Android APK, r
 
 ## Completed implementation
 
-The repaired dependency is saved in local commit 28995a196ba5f098141807ea76af7cfe16a31985 and included as a licensed source snapshot in Openpelo/third_party/flutter_adb. OpenPelo uses that relative package path, so the repair is buildable without an unpublished remote Git reference. GitHub publication was not performed.
+The repaired dependency is saved in commit 28995a196ba5f098141807ea76af7cfe16a31985 and included as a licensed source snapshot in Openpelo/third_party/flutter_adb. OpenPelo uses that relative package path, so the repair is self-contained. After explicit publication authorization, the repair branches were pushed only to nate-santos/flutter_adb (fix/negotiated-adb-writes) and nate-santos/Openpelo (fix/android-adb-transfer). No upstream repositories were changed.
 
 The tested Android x86_64 APK is test-environment/OpenPelo-Android-adb-repair-x86_64.apk (version 1.0.81-adb-repair, build 82). The final acceptance matrix and evidence index are in Openpelo/docs/ANDROID_ADB_REPAIR_RESULTS.md.
